@@ -1,446 +1,332 @@
-/* Hello Triangle - código adaptado de https://learnopengl.com/#!Getting-started/Hello-Triangle
+/* Hello Pyramid - código adaptado de https://learnopengl.com/#!Getting-started/Hello-Triangle
  *
- * Adaptado por Rossana Baptista Queiroz
- * para a disciplina de Processamento Gráfico/Computação Gráfica - Unisinos
+ * Adaptado por Isadora Ghisleni do código de Rossana Baptista Queiroz
+ * para a disciplina de Computação Gráfica - Unisinos
  * Versão inicial: 7/4/2017
- * Última atualização em 01/03/2023
+ * Última atualização em 05/04/2023
  *
  */
 
-#include <iostream>
-#include <string>
-#include <assert.h>
-
-using namespace std;
-
-// GLAD
 #include <glad/glad.h>
-
-// GLFW
 #include <GLFW/glfw3.h>
 
-//GLM
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "shader.h"
+#include "camera.h"
+#include "model.h"
+#include "json_parser.h"
+#include "objeto.h"
 
-// Protótipo da função de callback de teclado
-void key_callback(GLFWwindow* window, int key, int scancode, int action, int mode);
+#include <iostream>
+#include <string>
+#include <fstream>
+#include <vector>
 
-// Protótipos das funções
-int setupShader();
-int setupGeometry();
 
-// Dimensões da janela (pode ser alterado em tempo de execução)
-const GLuint WIDTH = 1000, HEIGHT = 1000;
+void framebuffer_size_callback(GLFWwindow* window, int width, int height);
+void mouse_callback(GLFWwindow* window, double xpos, double ypos);
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
+void processInput(GLFWwindow* window);
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods);
+void lerArqCurva(const GLchar* path);
+void ajustarTamanhoCurva(std::vector<glm::vec3*>* points, float factor);
+float calcularAnguloOBJ(int indexA, int indexB);
 
-// Código fonte do Vertex Shader (em GLSL): ainda hardcoded
-const GLchar* vertexShaderSource = "#version 450\n"
-"layout (location = 0) in vec3 position;\n"
-"layout (location = 1) in vec3 color;\n"
-"uniform mat4 model;\n"
-"out vec4 finalColor;\n"
-"void main()\n"
-"{\n"
-//...pode ter mais linhas de código aqui!
-"gl_Position = model * vec4(position, 1.0);\n"
-"finalColor = vec4(color, 1.0);\n"
-"}\0";
+int textureNum = 0;
+//Tamanho da curva
+float tamanhoCurva = 15.0f;
 
-//Códifo fonte do Fragment Shader (em GLSL): ainda hardcoded
-const GLchar* fragmentShaderSource = "#version 450\n"
-"in vec4 finalColor;\n"
-"out vec4 color;\n"
-"void main()\n"
-"{\n"
-"color = finalColor;\n"
-"}\n\0";
+std::vector<glm::vec3*>* pontosCurva = new std::vector<glm::vec3*>();
+std::vector<glm::vec3*>* scaledCurvePoints = new std::vector<glm::vec3*>();
 
-bool rotateX=false, rotateY=false, rotateZ=false;
+// settings
+const unsigned int SCR_WIDTH = 800;
+const unsigned int SCR_HEIGHT = 600;
+string img_name;
 
-// Função MAIN
+
+void setObject(Shader shader, Objeto objeto, Model modelo);
+
+vector <Objeto> objetos;
+vector <Model> modelos;
+
+// camera
+Camera camera(glm::vec3(0.0f, 10.0f, 30.0f));
+float lastX = SCR_WIDTH / 2.0f;
+float lastY = SCR_HEIGHT / 2.0f;
+bool firstMouse = true;
+
+// timing
+float deltaTime = 0.0f;
+float lastFrame = 0.0f;
+
+// selection
+bool isSelected1 = false;
+bool isSelected2 = false;
+
+float angle = 0.0f;
+
 int main()
 {
-	// Inicialização da GLFW
-	glfwInit();
+    // Le objetos do json
+    //estrutura dados em formato de texto e permite troca de dados entre aplicações
+    JsonParser parser("../config.json");
+    objetos = parser.getObjetos();
 
-	//Muita atenção aqui: alguns ambientes não aceitam essas configurações
-	//Você deve adaptar para a versão do OpenGL suportada por sua placa
-	//Sugestão: comente essas linhas de código para desobrir a versão e
-	//depois atualize (por exemplo: 4.5 com 4 e 5)
-	//glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-	//glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-	//glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwInit();
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-	//Essencial para computadores da Apple
-//#ifdef __APPLE__
-//	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-//#endif
+#ifdef __APPLE__
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#endif
 
-	// Criação da janela GLFW
-	GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "Ola 3D!", nullptr, nullptr);
-	glfwMakeContextCurrent(window);
+    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "Visualizador 3D", NULL, NULL);
+    if (window == NULL)
+    {
+        std::cout << "Failed to create GLFW window" << std::endl;
+        glfwTerminate();
+        return -1;
+    }
 
-	// Fazendo o registro da função de callback para a janela GLFW
-	glfwSetKeyCallback(window, key_callback);
+    // inicializa metodos de callback
+    glfwMakeContextCurrent(window);
+    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+    glfwSetCursorPosCallback(window, mouse_callback);
+    glfwSetScrollCallback(window, scroll_callback);
+    glfwSetKeyCallback(window, key_callback);
 
-	// GLAD: carrega todos os ponteiros d funções da OpenGL
-	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
-	{
-		std::cout << "Failed to initialize GLAD" << std::endl;
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
-	}
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
+    {
+        std::cout << "Failed to initialize GLAD" << std::endl;
+        return -1;
+    }
 
-	// Obtendo as informações de versão
-	const GLubyte* renderer = glGetString(GL_RENDERER); /* get renderer string */
-	const GLubyte* version = glGetString(GL_VERSION); /* version as a string */
-	cout << "Renderer: " << renderer << endl;
-	cout << "OpenGL version supported " << version << endl;
+    stbi_set_flip_vertically_on_load(false);
 
-	// Definindo as dimensões da viewport com as mesmas dimensões da janela da aplicação
-	int width, height;
-	glfwGetFramebufferSize(window, &width, &height);
-	glViewport(0, 0, width, height);
+    glEnable(GL_DEPTH_TEST);
 
+    //carrega shader models
+    Shader ourShader("../shaders/shader_model.vs", "../shaders/shader_model.fs");
+    Shader selectedShader("../shaders/shader_model.vs", "../shaders/selected_shader_model.fs");
 
-	// Compilando e buildando o programa de shader
-	GLuint shaderID = setupShader();
+    Shader currentShader = ourShader;
 
-	// Gerando um buffer simples, com a geometria de um triângulo
-	GLuint VAO = setupGeometry();
+    // Le caminho dos arquivos
+    for (int i = 0; i < objetos.size(); i++) {
+        modelos.push_back(Model(objetos[i].path));
+    }
 
+    camera.AtualizaCamera(objetos);
 
-	glUseProgram(shaderID);
+    lerArqCurva("../originalCurve.txt");
+    ajustarTamanhoCurva(pontosCurva, tamanhoCurva);
 
-	glm::mat4 model = glm::mat4(1); //matriz identidade;
-	GLint modelLoc = glGetUniformLocation(shaderID, "model");
-	//
-	model = glm::rotate(model, /*(GLfloat)glfwGetTime()*/glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-	glUniformMatrix4fv(modelLoc, 1, FALSE, glm::value_ptr(model));
+    while (!glfwWindowShouldClose(window))
+    {
+        float currentFrame = static_cast<float>(glfwGetTime());
+        deltaTime = currentFrame - lastFrame;
+        lastFrame = currentFrame;
 
-	glEnable(GL_DEPTH_TEST);
+        processInput(window);
 
+        //cor de fundo
+        glClearColor(1.0f, 0.8f, 0.3f, 0.7f); 
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-	// Loop da aplicação - "game loop"
-	while (!glfwWindowShouldClose(window))
-	{
-		// Checa se houveram eventos de input (key pressed, mouse moved etc.) e chama as funções de callback correspondentes
-		glfwPollEvents();
+        // Loop para setar objetos e escolher shader      
+        for (int i = 0; i < objetos.size(); i++) {
+            currentShader = (objetos[i].isSelected) ? selectedShader : ourShader;
+            currentShader.use();
+            setObject(currentShader, objetos[i], modelos[i]);
+        }
 
-		// Limpa o buffer de cor
-		glClearColor(1.0f, 1.0f, 1.0f, 1.0f); //cor de fundo
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+    }
 
-		glLineWidth(10);
-		glPointSize(20);
-
-		float angle = (GLfloat)glfwGetTime();
-
-		model = glm::mat4(1); 
-		if (rotateX)
-		{
-			model = glm::rotate(model, angle, glm::vec3(1.0f, 0.0f, 0.0f));
-			
-		}
-		else if (rotateY)
-		{
-			model = glm::rotate(model, angle, glm::vec3(0.0f, 1.0f, 0.0f));
-
-		}
-		else if (rotateZ)
-		{
-			model = glm::rotate(model, angle, glm::vec3(0.0f, 0.0f, 1.0f));
-
-		}
-
-		glUniformMatrix4fv(modelLoc, 1, FALSE, glm::value_ptr(model));
-		// Chamada de desenho - drawcall
-		// Poligono Preenchido - GL_TRIANGLES
-		
-		glBindVertexArray(VAO);
-		glDrawArrays(GL_TRIANGLES, 0, 42);
-
-		// Chamada de desenho - drawcall
-		// CONTORNO - GL_LINE_LOOP
-		
-		glDrawArrays(GL_POINTS, 0, 42);
-		glBindVertexArray(0);
-
-		// Troca os buffers da tela
-		glfwSwapBuffers(window);
-	}
-	// Pede pra OpenGL desalocar os buffers
-	glDeleteVertexArrays(1, &VAO);
-	// Finaliza a execução da GLFW, limpando os recursos alocados por ela
-	glfwTerminate();
-	return 0;
+    glfwTerminate();
+    return 0;
 }
 
-// Função de callback de teclado - só pode ter uma instância (deve ser estática se
-// estiver dentro de uma classe) - É chamada sempre que uma tecla for pressionada
-// ou solta via GLFW
-void key_callback(GLFWwindow* window, int key, int scancode, int action, int mode)
+void processInput(GLFWwindow* window)
 {
-	if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
-		glfwSetWindowShouldClose(window, GL_TRUE);
+    Objeto objeto = objetos[0];
+    for (unsigned int i = 0; i < objetos.size(); i++) {
+        if (objetos[i].isSelected) {
+            objeto = objetos[i];
+        }
+    }
 
-	if (key == GLFW_KEY_X && action == GLFW_PRESS)
-	{
-		rotateX = true;
-		rotateY = false;
-		rotateZ = false;
-	}
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+        glfwSetWindowShouldClose(window, true);
 
-	if (key == GLFW_KEY_Y && action == GLFW_PRESS)
-	{
-		rotateX = false;
-		rotateY = true;
-		rotateZ = false;
-	}
+    // comandos para movimentar camera
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        camera.ProcessKeyboard(FORWARD, deltaTime, objeto);
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        camera.ProcessKeyboard(BACKWARD, deltaTime, objeto);
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        camera.ProcessKeyboard(LEFT, deltaTime, objeto);
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        camera.ProcessKeyboard(RIGHT, deltaTime, objeto);
 
-	if (key == GLFW_KEY_Z && action == GLFW_PRESS)
-	{
-		rotateX = false;
-		rotateY = false;
-		rotateZ = true;
-	}
+    // altera entre translacao e rotacao
+    if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS)
+        camera.ProcessKeyboard(ROTACAO, deltaTime, objeto);
+    if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS)
+        camera.ProcessKeyboard(TRANSLACAO, deltaTime, objeto);
 
+    // incrementa ou decrementa movimento de translacao
+    if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS)
+        camera.ProcessKeyboard(I, deltaTime, objeto);
+    if (glfwGetKey(window, GLFW_KEY_U) == GLFW_PRESS)
+        camera.ProcessKeyboard(U, deltaTime, objeto);
 
+    // movimentação nos eixos
+    if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS)
+        camera.ProcessKeyboard(X, deltaTime, objeto);
+    if (glfwGetKey(window, GLFW_KEY_Y) == GLFW_PRESS)
+        camera.ProcessKeyboard(Y, deltaTime, objeto);
+    if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS)
+        camera.ProcessKeyboard(Z, deltaTime, objeto);
 
+    // muda escala 
+    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
+        camera.ProcessKeyboard(ESCALA, deltaTime, objeto);
 }
 
-//Esta função está basntante hardcoded - objetivo é compilar e "buildar" um programa de
-// shader simples e único neste exemplo de código
-// O código fonte do vertex e fragment shader está nos arrays vertexShaderSource e
-// fragmentShader source no iniçio deste arquivo
-// A função retorna o identificador do programa de shader
-int setupShader()
+void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 {
-	// Vertex shader
-	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-	glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
-	glCompileShader(vertexShader);
-	// Checando erros de compilação (exibição via log no terminal)
-	GLint success;
-	GLchar infoLog[512];
-	glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
-	if (!success)
-	{
-		glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
-		std::cout << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n" << infoLog << std::endl;
-	}
-	// Fragment shader
-	GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-	glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
-	glCompileShader(fragmentShader);
-	// Checando erros de compilação (exibição via log no terminal)
-	glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-	if (!success)
-	{
-		glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
-		std::cout << "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
-	}
-	// Linkando os shaders e criando o identificador do programa de shader
-	GLuint shaderProgram = glCreateProgram();
-	glAttachShader(shaderProgram, vertexShader);
-	glAttachShader(shaderProgram, fragmentShader);
-	glLinkProgram(shaderProgram);
-	// Checando por erros de linkagem
-	glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
-	if (!success) {
-		glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog);
-		std::cout << "ERROR::SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
-	}
-	glDeleteShader(vertexShader);
-	glDeleteShader(fragmentShader);
-
-	return shaderProgram;
+    glViewport(0, 0, width, height);
 }
 
-// Esta função está bastante harcoded - objetivo é criar os buffers que armazenam a 
-// geometria de um triângulo
-// Apenas atributo coordenada nos vértices
-// 1 VBO com as coordenadas, VAO com apenas 1 ponteiro para atributo
-// A função retorna o identificador do VAO
-int setupGeometry()
+void mouse_callback(GLFWwindow* window, double xposIn, double yposIn)
 {
-	// Aqui setamos as coordenadas x, y e z do triângulo e as armazenamos de forma
-	// sequencial, já visando mandar para o VBO (Vertex Buffer Objects)
-	// Cada atributo do vértice (coordenada, cores, coordenadas de textura, normal, etc)
-	// Pode ser arazenado em um VBO único ou em VBOs separados
-	GLfloat vertices[] = {
-
-		//Base da pirâmide: 2 triângulos 
-
-//x    y    z    r    g    b 
-
--0.5, -0.5, -0.5, 1.0, 1.0, 0.0,
-
--0.5, -0.5,  0.5, 0.0, 1.0, 1.0,
-
- 0.5, -0.5, -0.5, 1.0, 0.0, 1.0,
-
-
-
- -0.5, -0.5,  0.5, 1.0, 1.0, 0.0,
-
-  0.5, -0.5,  0.5, 0.0, 1.0, 1.0,
-
-  0.5, -0.5, -0.5, 1.0, 0.0, 1.0,
-
-
-
-   
-
-  -0.5, -0.5, -0.5, 1.0, 1.0, 0.0,   //face frontal 
-
-   0.5, -0.5, -0.5, 1.0, 1.0, 0.0,
-
-  -0.5,  0.5, -0.5, 1.0, 1.0, 0.0,
-
-
-
-   0.5,   0.5, -0.5, 1.0, 1.0, 0.0,
-
-  -0.5,   0.5, -0.5, 1.0, 1.0, 0.0,
-
-   0.5,  -0.5, -0.5, 1.0, 1.0, 0.0,
-
-
-
-
-
-
-
-  -0.5, -0.5, -0.5, 1.0, 0.0, 1.0,   //face lateral esquerda 
-
-  -0.5,  0.5, -0.5, 1.0, 0.0, 1.0,
-
-  -0.5, -0.5, 0.5, 1.0, 0.0, 1.0,
-
-
-
-  -0.5,  0.5,  0.5, 1.0, 0.0, 1.0,
-
-  -0.5,  0.5, -0.5, 1.0, 0.0, 1.0,
-
-  -0.5, -0.5, 0.5, 1.0, 0.0, 1.0,
-
-
-
-
-
-  -0.5, -0.5, 0.5, 1.0, 1.0, 0.0,    //face de tras 
-
-  -0.5,  0.5, 0.5, 1.0, 1.0, 0.0,
-
-   0.5,  0.5, 0.5, 1.0, 1.0, 0.0,
-
-
-
-   0.5,  0.5, 0.5, 1.0, 1.0, 0.0,
-
-  -0.5, -0.5, 0.5, 1.0, 1.0, 0.0,
-
-   0.5, -0.5, 0.5, 1.0, 1.0, 0.0,
-
-
-
-
-
-   0.5,  0.5,  0.5, 0.0, 1.0, 1.0,   //face lateral direita 
-
-   0.5,  -0.5, 0.5, 0.0, 1.0, 1.0,
-
-   0.5, -0.5, -0.5, 0.0, 1.0, 1.0,
-
-
-
-   0.5, -0.5,  -0.5, 0.0, 1.0, 1.0,
-
-   0.5,  0.5, -0.5, 0.0, 1.0, 1.0,
-
-   0.5,  0.5,  0.5, 0.0, 1.0, 1.0,
-
-
-
-   0.5,  0.5,  0.5, 0.0, 1.0, 1.0,   //tampa  
-
-   0.5,  0.5, -0.5, 0.0, 1.0, 1.0,
-
-  -0.5,  0.5, -0.5, 0.0, 1.0, 1.0,
-
-
-
-   0.5,  0.5,  0.5, 0.0, 1.0, 1.0,
-
-  -0.5,  0.5, -0.5, 0.0, 1.0, 1.0,
-
-  -0.5,  0.5,  0.5, 0.0, 1.0, 1.0,
-
-	 //chão
-
-	 -1.0, -0.5, -1.0,  0.5, 0.5, 0.5,
-
-	 -1.0, -0.5,  1.0,  0.5, 0.5, 0.5,
-
- 	 1.0,  -0.5, -1.0,  0.5, 0.5, 0.5,
-
-	-1.0,  -0.5,  1.0,  0.5, 0.5, 0.5,
-
-	 1.0,  -0.5,  1.0,  0.5, 0.5, 0.5,
-
-	 1.0,  -0.5, -1.0,  0.5, 0.5, 0.5,
-
-
-
-
-	};
-
-	GLuint VBO, VAO;
-
-	//Geração do identificador do VBO
-	glGenBuffers(1, &VBO);
-
-	//Faz a conexão (vincula) do buffer como um buffer de array
-	glBindBuffer(GL_ARRAY_BUFFER, VBO);
-
-	//Envia os dados do array de floats para o buffer da OpenGl
-	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-	//Geração do identificador do VAO (Vertex Array Object)
-	glGenVertexArrays(1, &VAO);
-
-	// Vincula (bind) o VAO primeiro, e em seguida  conecta e seta o(s) buffer(s) de vértices
-	// e os ponteiros para os atributos 
-	glBindVertexArray(VAO);
-	
-	//Para cada atributo do vertice, criamos um "AttribPointer" (ponteiro para o atributo), indicando: 
-	// Localização no shader * (a localização dos atributos devem ser correspondentes no layout especificado no vertex shader)
-	// Numero de valores que o atributo tem (por ex, 3 coordenadas xyz) 
-	// Tipo do dado
-	// Se está normalizado (entre zero e um)
-	// Tamanho em bytes 
-	// Deslocamento a partir do byte zero 
-	
-	//Atributo posição (x, y, z)
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (GLvoid*)0);
-	glEnableVertexAttribArray(0);
-
-	//Atributo cor (r, g, b)
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (GLvoid*)(3*sizeof(GLfloat)));
-	glEnableVertexAttribArray(1);
-
-
-
-	// Observe que isso é permitido, a chamada para glVertexAttribPointer registrou o VBO como o objeto de buffer de vértice 
-	// atualmente vinculado - para que depois possamos desvincular com segurança
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-	// Desvincula o VAO (é uma boa prática desvincular qualquer buffer ou array para evitar bugs medonhos)
-	glBindVertexArray(0);
-
-	return VAO;
+    float xpos = static_cast<float>(xposIn);
+    float ypos = static_cast<float>(yposIn);
+
+    if (firstMouse)
+    {
+        lastX = xpos;
+        lastY = ypos;
+        firstMouse = false;
+    }
+
+    float xoffset = xpos - lastX;
+    float yoffset = lastY - ypos;
+
+    lastX = xpos;
+    lastY = ypos;
+
+    camera.ProcessMouseMovement(xoffset, yoffset);
 }
 
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
+{
+    camera.ProcessMouseScroll(static_cast<float>(yoffset));
+}
+
+void setObject(Shader shader, Objeto objeto, Model modelo)
+{
+    // iluminação
+    GLint lightColorLoc = glGetUniformLocation(shader.ID, "lightColor");
+    glUniform3f(lightColorLoc, 0.5f, 0.5f, 0.5f);
+    GLint lightPosLoc = glGetUniformLocation(shader.ID, "lightPos");
+    glUniform3f(lightPosLoc, 0.0f, 5.0f, 2.0f);
+    GLint viewPosLoc = glGetUniformLocation(shader.ID, "viewPos");
+    glUniform3f(viewPosLoc, 0.0f, 10.0f, 30.0f); // mudar para usar posição da câmera
+
+
+    // matrizes view/projection transformations
+    glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+    shader.setMat4("projection", projection);
+    GLint projectionLoc = glGetUniformLocation(shader.ID, "projection");
+    glUniformMatrix4fv(projectionLoc, 1, false, glm::value_ptr(projection));
+
+    glm::mat4 view = camera.GetViewMatrix(objeto.id);
+    shader.setMat4("view", view);
+    GLint viewLoc = glGetUniformLocation(shader.ID, "view");
+    glUniformMatrix4fv(viewLoc, 1, false, glm::value_ptr(view));
+
+    // model
+    glm::mat4 modelMatrix = glm::mat4(1.0f);
+    modelMatrix = camera.GetModelMatrix(modelMatrix, objeto, pontosCurva);
+    shader.setMat4("model", modelMatrix);
+    GLint modelLoc = glGetUniformLocation(shader.ID, "model");
+    glUniformMatrix4fv(modelLoc, 1, false, glm::value_ptr(modelMatrix));
+    modelo.Draw(shader);
+}
+
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+    Objeto selecionado = objetos[0];
+    if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS)
+    {
+        for (unsigned int i = 0; i < objetos.size(); i++) {
+            if (objetos[i].isSelected) {
+                selecionado = objetos[i];
+                objetos[i].isSelected = false;
+            }
+        }
+        if ((selecionado.id + 1) < objetos.size())
+            objetos[selecionado.id + 1].isSelected = true;
+        else
+            objetos[0].isSelected = true;
+    }
+}
+void ajustarTamanhoCurva(std::vector<glm::vec3*>* points, float factor) {
+    for (int i = 0; i < points->size(); i++) {
+        scaledCurvePoints->push_back(new glm::vec3(points->at(i)->x * factor, points->at(i)->y, points->at(i)->z * factor));
+    }
+    pontosCurva = scaledCurvePoints;
+}
+
+void lerArqCurva(const GLchar* path) {
+    std::ifstream file;
+    file.exceptions(std::ifstream::badbit);
+
+    try {
+        file.open(path);
+
+        if (!file.is_open()) {
+            std::cout << "ERRO::Pontos da Curva::ERRO NO ARQUIVO";
+        }
+
+        std::string line, temp;
+        std::stringstream sstream;
+        int lineCounter = 1;
+
+        while (!file.eof()) {
+
+            sstream = std::stringstream();
+            line = temp = "";
+
+            //get first line of the file
+            std::getline(file, line);
+
+            //get content of the line
+            sstream << line;
+            sstream >> temp;
+
+            if (temp == "v") {
+                float x, y, z;
+                sstream >> x >> y >> z;
+                pontosCurva->push_back(new glm::vec3(x, y, z));
+            }
+            lineCounter++;
+        }
+        file.close();
+    }
+    catch (const std::ifstream::failure& e) {
+        if (!file.eof()) {
+            std::cout << "ERROR::Pontos da Curva::ERRO NA LEITURA DO ARQUIVO" << std::endl;
+        }
+    }
+}
